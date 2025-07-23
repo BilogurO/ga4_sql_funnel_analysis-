@@ -1,0 +1,44 @@
+WITH cr_events AS (
+  SELECT
+    DATE(TIMESTAMP_MICROS(event_timestamp)) AS event_date,
+    event_name,
+    CONCAT( user_pseudo_id, (
+      SELECT value.int_value FROM UNNEST(event_params) WHERE KEY = "ga_session_id") ) AS user_session_id,
+    traffic_source.source AS source,
+    traffic_source.medium AS medium,
+    traffic_source.name AS campaign
+  FROM `bigquery-public-data.ga4_obfuscated_sample_ecommerce.events_*`
+  -- WHERE event_name IN ('session_start', 'add_to_cart', 'begin_checkout', 'purchase')
+),
+
+events_count AS (
+  SELECT
+    event_date,
+    source,
+    medium,
+    campaign,
+    COUNT(DISTINCT CASE WHEN event_name = 'session_start' THEN user_session_id END) AS user_sessions_count,
+    COUNT(DISTINCT CASE WHEN event_name = 'add_to_cart' THEN user_session_id END) AS add_to_cart_sessions,
+    COUNT(DISTINCT CASE WHEN event_name = 'begin_checkout' THEN user_session_id END) AS begin_checkout_sessions,
+    COUNT(DISTINCT CASE WHEN event_name = 'purchase' THEN user_session_id END) AS purchase_sessions
+  FROM cr_events
+  GROUP BY event_date, source, medium, campaign
+)
+
+SELECT
+  event_date,
+  source,
+  medium,
+  campaign,
+  user_sessions_count ,
+  -- add_to_cart_sessions,
+  -- begin_checkout_sessions,
+  -- purchase_sessions,
+  -- Round(SAFE_DIVIDE(add_to_cart_sessions, user_sessions_count ),4 ) AS visit_to_cart,
+  -- Round(SAFE_DIVIDE(begin_checkout_sessions, user_sessions_count ),4 ) AS visit_to_checkout,
+  -- Round(SAFE_DIVIDE(purchase_sessions, user_sessions_count ),4 ) AS visit_to_purchase
+  Round(add_to_cart_sessions*100 / user_sessions_count,4 ) AS visit_to_cart,
+  Round(begin_checkout_sessions*100 / user_sessions_count ,4 ) AS visit_to_checkout,
+  Round(purchase_sessions*100 / user_sessions_count ,4 ) AS visit_to_purchase
+FROM events_count
+ORDER BY event_date DESC, user_sessions_count  DESC;
