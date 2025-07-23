@@ -1,0 +1,29 @@
+with user_sessions AS 
+(select user_pseudo_id,
+    user_pseudo_id || cast((select value.int_value from unnest(event_params) where key = 'ga_session_id')
+    as string) as user_session_id,
+REGEXP_EXTRACT(
+  (SELECT value.string_value FROM UNNEST(event_params) WHERE key = "page_location"),
+  r'^https?://[^/]+/([^?]*)') AS page_path,
+   cast ((SELECT value.int_value FROM UNNEST(event_params) WHERE key = 'page_location')
+     as string) AS page_location
+FROM `bigquery-public-data.ga4_obfuscated_sample_ecommerce.events_*`
+WHERE _TABLE_SUFFIX between '20200101' AND  '20201231'and event_name='session_start'
+),
+purchases AS (SELECT 
+user_pseudo_id,
+  user_pseudo_id || cast ((SELECT value.int_value FROM UNNEST(event_params) WHERE key = 'ga_session_id')
+  AS string) as user_session_id
+FROM `bigquery-public-data.ga4_obfuscated_sample_ecommerce.events_*`
+WHERE _TABLE_SUFFIX between '20200101' AND  '20201231'and event_name='purchase'),
+table as (SELECT page_path,
+  COUNT(DISTINCT s.user_session_id) AS sessions_count,
+  COUNT(DISTINCT s.user_pseudo_id) AS unique_users,
+  COUNT(DISTINCT p.user_session_id) AS purchases_count
+FROM user_sessions s
+LEFT JOIN purchases p using(user_session_id)
+GROUP BY s.page_path)
+select page_path, sessions_count, unique_users, purchases_count,
+  round (case when sessions_count = 0 then null else (purchases_count / sessions_count) *100 end, 2) as conv_rate
+from table
+ORDER BY unique_users desc;
