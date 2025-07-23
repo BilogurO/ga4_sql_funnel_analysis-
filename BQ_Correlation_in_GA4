@@ -1,0 +1,43 @@
+WITH main_cte AS (
+  SELECT
+    TIMESTAMP_MICROS(event_timestamp) AS event_timestamp,
+    DATE(TIMESTAMP_MICROS(event_timestamp)) AS event_date,
+    event_name,
+    event_params,
+    user_pseudo_id,
+    (SELECT value.int_value FROM UNNEST(event_params) WHERE key = 'ga_session_id') AS session_id,
+    CONCAT(user_pseudo_id, '-', (SELECT value.int_value FROM UNNEST(event_params) WHERE key = 'ga_session_id')) AS user_session_id,
+    CAST((SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'session_engaged') AS INT64) AS session_engaged,
+    COALESCE((SELECT value.int_value FROM UNNEST(event_params) WHERE key = 'engagement_time_msec'), 0) AS engagement_time_msec
+  FROM
+    `bigquery-public-data.ga4_obfuscated_sample_ecommerce.events_*`
+),
+engagement_cte AS (
+  SELECT
+    user_session_id,
+    MAX(session_engaged) AS session_engaged,
+    SUM(engagement_time_msec) AS total_engagement_time_msec
+  FROM main_cte
+  GROUP BY user_session_id
+),
+purchases_cte AS (
+  SELECT DISTINCT
+    event_timestamp,
+    event_name,
+    user_session_id
+  FROM main_cte
+  WHERE event_name = 'purchase'
+),
+result_cte AS (
+  SELECT
+    e_cte.user_session_id,
+    e_cte.session_engaged,
+    e_cte.total_engagement_time_msec,
+    IF(p_cte.user_session_id IS NOT NULL, 1, 0) AS finish_with_purchase
+  FROM engagement_cte AS e_cte
+  LEFT JOIN purchases_cte AS p_cte ON e_cte.user_session_id = p_cte.user_session_id
+)
+SELECT
+  CORR(r_cte.session_engaged, r_cte.finish_with_purchase) AS engaged_corr,
+  CORR(r_cte.total_engagement_time_msec, r_cte.finish_with_purchase) AS engagement_time_corr
+FROM result_cte AS r_cte;
